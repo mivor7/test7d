@@ -3,134 +3,87 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Duck2 — Secure Text Encryption</title>
-    <meta name="description" content="AES-256-GCM text encryption with compression and short-code sharing." />
+    <title>Duck2 — encrypt a note, share a short code</title>
+    <meta name="description" content="Encrypt a note in the browser and share it as a short code. Add a passphrase to lock it." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%233b5bdb'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-size='13' font-family='sans-serif' fill='white'%3ED2%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="style.css" />
+    <script>
+        try {
+            var savedTheme = localStorage.getItem("duck2-theme");
+            var preferLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+            if (savedTheme === "light" || (!savedTheme && preferLight)) document.documentElement.classList.add("light");
+        } catch (e) {}
+    </script>
 </head>
 <body>
-
-<!-- ═══ TOPBAR ═══ -->
-<div class="topbar">
-    <div class="topbar-left">
-        <div class="brand"><i>D2</i><span>duck2</span></div>
-        <div class="sep"></div>
-        <div class="tabs">
-            <button class="tab on" id="mode-enc" onclick="app.setMode('encrypt')">encrypt</button>
-            <button class="tab" id="mode-dec" onclick="app.setMode('decrypt')">decrypt</button>
+    <header class="header">
+        <div class="brand">
+            <p class="brand-name">Duck2</p>
+            <p class="brand-tag">Encrypt a note in the browser, then share a short code.</p>
         </div>
-    </div>
-    <div class="topbar-right">
-        <div class="kbd-hint"><kbd class="kbd">⌘E</kbd> enc <kbd class="kbd">⌘D</kbd> dec <kbd class="kbd">⌘K</kbd> key</div>
-        <div class="sep"></div>
-        <button class="ibtn" onclick="app.toggleTheme()" title="Toggle theme">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
-                <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
-                <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-        </button>
-    </div>
-</div>
-
-<!-- ═══ WORKSPACE ═══ -->
-<div class="workspace">
-
-    <!-- INPUT PANE -->
-    <div class="pane" id="card-input">
-        <div class="pane-head">
-            <span class="pane-tag"><span class="dot"></span><span id="lbl-input">input</span></span>
-            <div class="pane-acts">
-                <button class="pbtn" id="btn-source" onclick="app.toggleDecryptInputMode()" hidden>full code</button>
-                <button class="pbtn" onclick="app.paste()">paste</button>
-                <button class="pbtn" onclick="app.clear()">clear</button>
+        <div class="header-actions">
+            <div class="segment" role="tablist" aria-label="Mode">
+                <button type="button" class="segment-btn" id="mode-enc" role="tab" aria-selected="true" aria-controls="composer">Encrypt</button>
+                <button type="button" class="segment-btn" id="mode-dec" role="tab" aria-selected="false" aria-controls="composer">Decrypt</button>
             </div>
+            <button type="button" class="btn" id="btn-theme">Light theme</button>
         </div>
-        <div class="pane-body" id="text-shell">
-            <textarea id="input" placeholder="type or paste text…" spellcheck="false"></textarea>
-        </div>
-        <div class="compact-in" id="short-shell" hidden>
-            <div class="c-row">
-                <input type="text" id="short-input" placeholder="paste short code…" autocomplete="off" spellcheck="false" />
+    </header>
+
+    <main class="wrap">
+        <section class="card" id="composer" aria-labelledby="lbl-input">
+            <div class="card-head">
+                <label id="lbl-input" for="input">Message</label>
+                <div class="card-actions">
+                    <span class="meta" id="stat-chars">0 characters</span>
+                    <button type="button" class="btn" id="btn-paste">Paste</button>
+                    <button type="button" class="btn" id="btn-clear">Clear</button>
+                </div>
             </div>
-        </div>
-    </div>
+            <textarea id="input" rows="8" placeholder="Write the note you want to share" spellcheck="false" autocomplete="off"></textarea>
 
-    <!-- ═══ PIPELINE ═══ -->
-    <div class="pipeline" id="pipeline">
-        <div class="pipe-step" id="ps-compress" data-step="compress">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg>
-            <span>deflate</span>
-        </div>
-        <span class="pipe-arrow" id="pa1">→</span>
-
-        <div class="pipe-gate" id="key-dock">
-            <button class="gate-toggle" id="btn-key-toggle" onclick="app.togglePass()">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0"/></svg>
-                key
-            </button>
-            <div class="gate-field" id="pass-wrap">
-                <input type="password" id="pass" class="gate-input" placeholder="passphrase" autocomplete="off" spellcheck="false" />
-                <button class="gate-x" id="btn-clear-pass" onclick="app.clearPass()" title="clear key">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
+            <div class="field">
+                <div class="card-head">
+                    <label id="lbl-pass" for="pass">Passphrase</label>
+                </div>
+                <div class="pass-row">
+                    <input type="password" id="pass" autocomplete="off" spellcheck="false" placeholder="Leave blank to skip" />
+                    <button type="button" class="btn" id="btn-show-pass" aria-pressed="false">Show</button>
+                    <button type="button" class="btn" id="btn-clear-pass" hidden>Remove</button>
+                </div>
+                <p class="hint" id="pass-hint">Optional. Leave it blank and anyone with the code can read the note.</p>
             </div>
-        </div>
-        <span class="pipe-arrow" id="pa2">→</span>
 
-        <div class="pipe-step" id="ps-encrypt" data-step="encrypt">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <span>aes-256</span>
-        </div>
-        <span class="pipe-arrow" id="pa3">→</span>
-
-        <div class="pipe-step" id="ps-encode" data-step="encode">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-            <span>z85</span>
-        </div>
-        <span class="pipe-arrow" id="pa4">→</span>
-
-        <div class="pipe-step" id="ps-share" data-step="share">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13"/></svg>
-            <span>share</span>
-        </div>
-
-        <button class="pipe-go" id="btn-go" onclick="app.confirm()" title="Execute (Enter)" hidden>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </button>
-    </div>
-
-    <!-- OUTPUT PANE -->
-    <div class="pane" id="card-output">
-        <div class="pane-head">
-            <span class="pane-tag out-tag"><span class="dot"></span><span id="lbl-output">output</span></span>
-            <div class="pane-acts">
-                <button class="pbtn" id="btn-copy" onclick="app.copy()">copy</button>
+            <div class="actions">
+                <button type="button" class="btn primary" id="btn-go" disabled>Create short code</button>
+                <button type="button" class="btn" id="btn-show-full" hidden>Show full code</button>
             </div>
-        </div>
-        <div class="c-out" id="short-output-shell">
-            <input type="text" id="short-output" readonly placeholder="— waiting —" />
-        </div>
-        <textarea id="output" readonly placeholder="…" hidden></textarea>
-    </div>
-</div>
+        </section>
 
-<!-- ═══ STATUS BAR ═══ -->
-<div class="statusbar idle" id="statusbar">
-    <div class="status-left">
-        <span class="stat" id="stat-mode">mode: encrypt</span>
-        <span class="stat" id="stat-chars">0 chars</span>
-        <span class="stat" id="stat-bytes" hidden>→ 0 bytes</span>
-    </div>
-    <div class="status-right">
-        <span class="stat" id="stat-key">key: off</span>
-        <span class="stat" id="stat-status">ready</span>
-    </div>
-</div>
+        <section class="card" aria-labelledby="result-title">
+            <div class="card-head">
+                <h2 id="result-title">Result</h2>
+                <div class="card-actions">
+                    <button type="button" class="btn" id="btn-copy" disabled>Copy</button>
+                </div>
+            </div>
+            <p class="empty" id="result-empty">The code will show up here.</p>
+            <p class="short-code" id="short-output" hidden></p>
+            <p class="note" id="short-note" hidden>Anyone with this code can download the note. Short codes expire after about 30 days. Send the passphrase separately if you set one. The full code does not expire.</p>
+            <textarea id="output" readonly hidden spellcheck="false" aria-labelledby="result-title"></textarea>
+            <details id="full-details" hidden>
+                <summary>Show full code</summary>
+                <textarea id="full-code" readonly spellcheck="false"></textarea>
+                <button type="button" class="btn" id="btn-copy-full">Copy full code</button>
+            </details>
+            <p class="status" id="stat-status" role="status">Write a note. The full code appears here, then you can create a short code to send.</p>
+        </section>
+    </main>
 
-<div class="toast-rack" id="toast-rack"></div>
+    <footer class="footer">
+        <p>Ctrl or ⌘ Enter runs the button. Ctrl or ⌘ E switches to Encrypt. Ctrl or ⌘ D switches to Decrypt.</p>
+    </footer>
 
-<script src="duck.js"></script>
+    <script src="duck.js"></script>
 </body>
 </html>

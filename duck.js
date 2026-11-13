@@ -89,36 +89,16 @@ async function duckDecrypt(code, pass) {
 function parsePasteRef(raw) {
     const t = (raw || "").trim();
     if (!t || isDuckCode(t)) return "";
-    return /^[A-Za-z0-9_-]+$/.test(t) ? t : "";
-}
-
-// ═══════════════════════════════════════════
-//  TEXT SCRAMBLE EFFECT
-// ═══════════════════════════════════════════
-const SCRAMBLE_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?0123456789ABCDEFabcdef";
-
-function scrambleReveal(el, finalText, duration = 600) {
-    const len = finalText.length;
-    const start = performance.now();
-    el.classList.add("revealing");
-
-    function frame(now) {
-        const progress = Math.min((now - start) / duration, 1);
-        const revealed = Math.floor(progress * len);
-        let display = "";
-        for (let i = 0; i < len; i++) {
-            if (i < revealed) {
-                display += finalText[i];
-            } else {
-                display += SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-            }
-        }
-        el.value = display;
-        if (progress < 1) requestAnimationFrame(frame);
-        else { el.value = finalText; el.classList.remove("revealing"); }
+    if (/^https?:\/\//i.test(t)) {
+        try {
+            const url = new URL(t);
+            const id = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).pop() || "";
+            const host = url.hostname.replace(/^www\./, "");
+            if (["paste.rs", "pastes.dev", "api.pastes.dev"].includes(host) && /^[A-Za-z0-9_-]+$/.test(id) && id !== "web") return id;
+        } catch { /* not a usable link */ }
+        return "";
     }
-    if (len > 0) requestAnimationFrame(frame);
-    else el.value = finalText;
+    return /^[A-Za-z0-9_-]+$/.test(t) ? t : "";
 }
 
 // ═══════════════════════════════════════════
@@ -126,200 +106,180 @@ function scrambleReveal(el, finalText, duration = 600) {
 // ═══════════════════════════════════════════
 const $ = id => document.getElementById(id);
 let mode = "encrypt", timer, gen = 0;
-let decryptInputMode = "paste", passExpanded = false, passRequested = false;
 let draftDuckCode = "", publishedId = "", publishedFromDuckCode = "";
+const drafts = { encrypt: "", decrypt: "" };
 const pasteCache = new Map();
 let ui;
 
+const INTRO = {
+    encrypt: "Write a note. The full code appears here, then you can create a short code to send.",
+    decrypt: "Paste a short code or a full Duck code. The note will appear here.",
+};
+
 function initUI() {
     ui = {
-        input: $("input"), shortInput: $("short-input"),
-        output: $("output"), shortOutput: $("short-output"),
-        textShell: $("text-shell"), shortShell: $("short-shell"),
-        shortOutputShell: $("short-output-shell"),
-        keyDock: $("key-dock"), keyToggle: $("btn-key-toggle"),
-        pass: $("pass"), passWrap: $("pass-wrap"),
-        lblIn: $("lbl-input"), lblOut: $("lbl-output"),
+        input: $("input"), pass: $("pass"),
         btnEnc: $("mode-enc"), btnDec: $("mode-dec"),
-        btnGo: $("btn-go"), btnSource: $("btn-source"),
-        btnCopy: $("btn-copy"),
-        cardIn: $("card-input"), cardOut: $("card-output"),
-        toasts: $("toast-rack"),
-        pipeline: $("pipeline"),
-        psCompress: $("ps-compress"), psEncrypt: $("ps-encrypt"),
-        psEncode: $("ps-encode"), psShare: $("ps-share"),
-        pa1: $("pa1"), pa2: $("pa2"), pa3: $("pa3"), pa4: $("pa4"),
-        gateField: $("pass-wrap"), gateToggle: $("btn-key-toggle"),
-        gateClear: $("btn-clear-pass"),
-        statusbar: $("statusbar"),
-        statMode: $("stat-mode"), statChars: $("stat-chars"),
-        statBytes: $("stat-bytes"), statKey: $("stat-key"), statStatus: $("stat-status"),
+        btnTheme: $("btn-theme"), btnPaste: $("btn-paste"), btnClear: $("btn-clear"),
+        btnShowPass: $("btn-show-pass"), btnClearPass: $("btn-clear-pass"),
+        btnGo: $("btn-go"), btnShowFull: $("btn-show-full"),
+        btnCopy: $("btn-copy"), btnCopyFull: $("btn-copy-full"),
+        lblInput: $("lbl-input"), passHint: $("pass-hint"),
+        resultTitle: $("result-title"), resultEmpty: $("result-empty"),
+        shortOutput: $("short-output"), shortNote: $("short-note"),
+        output: $("output"), fullDetails: $("full-details"), fullCode: $("full-code"),
+        statChars: $("stat-chars"), status: $("stat-status"),
     };
 }
 
-// ── Pipeline ──
-const STEPS = ["psCompress", "psEncrypt", "psEncode", "psShare"];
-const ARROWS = ["pa1", "pa2", "pa3", "pa4"];
-
-function pipeReset() {
-    STEPS.forEach(s => ui[s].classList.remove("lit", "active"));
-    ARROWS.forEach(a => ui[a].classList.remove("lit"));
-    ui.pipeline.classList.remove("running");
+function setStatus(text, kind = "") {
+    ui.status.textContent = text;
+    ui.status.className = "status" + (kind ? " " + kind : "");
 }
 
-function pipeRunning(on) { ui.pipeline.classList.toggle("running", on); }
-
-function pipeLitSteps(names) {
-    pipeReset();
-    const order = ["compress", "encrypt", "encode", "share"];
-    const map = { compress: "psCompress", encrypt: "psEncrypt", encode: "psEncode", share: "psShare" };
-    let maxIdx = -1;
-    names.forEach(n => {
-        if (map[n]) { ui[map[n]].classList.add("lit"); maxIdx = Math.max(maxIdx, order.indexOf(n)); }
-    });
-    for (let i = 0; i <= maxIdx && i < ARROWS.length; i++) ui[ARROWS[i]].classList.add("lit");
+function fitTextarea(el) {
+    el.style.height = "0px";
+    el.style.height = `${Math.max(72, el.scrollHeight)}px`;
 }
 
-function pipeActiveStep(name) {
-    const map = { compress: "psCompress", encrypt: "psEncrypt", encode: "psEncode", share: "psShare" };
-    if (map[name]) ui[map[name]].classList.add("active");
+function showEmpty() {
+    ui.shortOutput.hidden = true;
+    ui.shortOutput.textContent = "";
+    ui.shortNote.hidden = true;
+    ui.output.hidden = true;
+    ui.output.value = "";
+    ui.fullDetails.hidden = true;
+    ui.fullCode.value = "";
+    ui.resultEmpty.hidden = false;
+    ui.resultTitle.textContent = mode === "encrypt" ? "Result" : "Message";
+    ui.btnCopy.disabled = true;
+    ui.btnCopy.textContent = "Copy";
 }
 
-// ── Status Bar ──
+function showBody(text, title) {
+    ui.resultTitle.textContent = title;
+    ui.resultEmpty.hidden = true;
+    ui.shortOutput.hidden = true;
+    ui.shortNote.hidden = true;
+    ui.fullDetails.hidden = true;
+    ui.output.hidden = false;
+    ui.output.value = text;
+    fitTextarea(ui.output);
+    ui.btnCopy.disabled = !text;
+}
+
+function showShort(id) {
+    ui.resultTitle.textContent = "Short code";
+    ui.resultEmpty.hidden = true;
+    ui.output.hidden = true;
+    ui.shortOutput.hidden = false;
+    ui.shortOutput.textContent = id;
+    ui.shortNote.hidden = false;
+    ui.fullDetails.hidden = false;
+    ui.fullCode.value = draftDuckCode;
+    if (ui.fullDetails.open) fitTextarea(ui.fullCode);
+    ui.btnCopy.disabled = !id;
+}
+
 function updateStats() {
-    const txt = app.getInputValue();
-    ui.statMode.textContent = `mode: ${mode}`;
-    ui.statChars.textContent = `${txt.length} chars`;
-    ui.statKey.textContent = `key: ${ui.pass.value ? "on" : "off"}`;
-    const active = txt.length > 0;
-    ui.statusbar.classList.toggle("active", active);
-    if (!active) { ui.statStatus.textContent = "ready"; ui.statBytes.hidden = true; pipeReset(); }
+    const n = ui.input.value.length;
+    ui.statChars.textContent = n === 1 ? "1 character" : `${n} characters`;
+    const busy = ui.btnGo.dataset.busy === "1";
+    const hasText = !!ui.input.value.trim();
+    const canDecrypt = !!(isDuckCode(ui.input.value) || parsePasteRef(ui.input.value));
+    if (!busy) ui.btnGo.disabled = mode === "encrypt" ? !hasText : !canDecrypt;
+    const lockLocal = mode === "encrypt" && !!ui.pass.value;
+    ui.btnShowFull.hidden = !lockLocal;
+    ui.btnShowFull.disabled = busy || !hasText;
+    ui.btnClearPass.hidden = !ui.pass.value;
 }
-function setStatus(t) { ui.statStatus.textContent = t; }
-function setBytes(n) { ui.statBytes.textContent = `→ ${n}b`; ui.statBytes.hidden = false; }
 
-// ── Copy Morph ──
-let copyTimer;
-function copyMorph() {
-    clearTimeout(copyTimer);
-    ui.btnCopy.textContent = "✓ copied";
-    ui.btnCopy.classList.add("copied");
-    copyTimer = setTimeout(() => {
-        ui.btnCopy.textContent = "copy";
-        ui.btnCopy.classList.remove("copied");
-    }, 1800);
+function setBusy(on) {
+    ui.btnGo.dataset.busy = on ? "1" : "";
+    ui.btnGo.textContent = on ? "Working…" : (mode === "encrypt" ? "Create short code" : "Decrypt");
+    updateStats();
+}
+
+function themeLabel() {
+    const light = document.documentElement.classList.contains("light");
+    ui.btnTheme.textContent = light ? "Dark theme" : "Light theme";
 }
 
 const app = {
-    toggleTheme() { document.documentElement.classList.toggle("light"); },
-    isShortDecryptMode() { return mode === "decrypt" && decryptInputMode === "paste"; },
-    activeInput() { return app.isShortDecryptMode() ? ui.shortInput : ui.input; },
-    getInputValue() { return app.activeInput().value; },
-    setInputValue(v) {
-        if (app.isShortDecryptMode()) { ui.shortInput.value = v; ui.input.value = ""; }
-        else { ui.input.value = v; ui.shortInput.value = ""; }
-    },
-    getOutputValue() { return mode === "encrypt" ? ui.shortOutput.value : ui.output.value; },
-    setOutputValue(v) {
-        if (mode === "encrypt") {
-            // scramble reveal for short output
-            if (v && v !== ui.shortOutput.value) scrambleReveal(ui.shortOutput, v, 400);
-            else ui.shortOutput.value = v;
-            ui.output.value = "";
-        } else {
-            ui.output.value = v;
-            ui.shortOutput.value = "";
-        }
-    },
-
-    syncPassUi() {
-        const has = ui.pass.value.length > 0;
-        const showField = mode === "encrypt" ? (passExpanded || has) : (passRequested || has);
-        ui.gateToggle.hidden = mode !== "encrypt" || showField;
-        ui.gateField.classList.toggle("open", showField);
-        ui.gateToggle.classList.toggle("on", has);
-        ui.gateClear.classList.toggle("vis", has);
-        if (has) ui.pass.classList.remove("err");
-        ui.pass.classList.toggle("locked", has);
-        ui.pass.placeholder = mode === "encrypt" ? (has ? "secured" : "passphrase") : (has ? "unlocking…" : "enter key");
-        updateStats();
+    toggleTheme() {
+        const light = !document.documentElement.classList.contains("light");
+        document.documentElement.classList.toggle("light", light);
+        try { localStorage.setItem("duck2-theme", light ? "light" : "dark"); } catch { /* private mode */ }
+        themeLabel();
     },
 
     syncUi() {
-        const shortDec = app.isShortDecryptMode(), compactOut = mode === "encrypt";
-        ui.btnSource.hidden = mode !== "decrypt";
-        ui.btnSource.textContent = shortDec ? "full code" : "short id";
-        ui.lblIn.textContent = mode === "encrypt" ? "input" : shortDec ? "short code" : "duck code";
-        ui.lblOut.textContent = mode === "encrypt" ? "output" : "plaintext";
-        ui.input.placeholder = mode === "encrypt" ? "type or paste text…" : "paste full duck code…";
-        ui.textShell.hidden = shortDec;
-        ui.shortShell.hidden = !shortDec;
-        ui.btnGo.hidden = !(mode === "encrypt" || shortDec);
-        ui.output.hidden = compactOut;
-        ui.shortOutputShell.hidden = !compactOut;
-        app.syncPassUi();
+        const enc = mode === "encrypt";
+        ui.lblInput.textContent = enc ? "Message" : "Code";
+        ui.input.placeholder = enc ? "Write the note you want to share" : "Paste a short code or a full Duck code";
+        ui.pass.placeholder = enc ? "Leave blank to skip" : "Only if the note was locked";
+        ui.passHint.textContent = enc
+            ? "Optional. Leave it blank and anyone with the code can read the note."
+            : "Enter it here if the note was locked. Share it separately from the code.";
+        if (ui.btnGo.dataset.busy !== "1") ui.btnGo.textContent = enc ? "Create short code" : "Decrypt";
+        ui.resultEmpty.textContent = enc ? "The code will show up here." : "The note will show up here.";
+        if (!ui.resultEmpty.hidden) ui.resultTitle.textContent = enc ? "Result" : "Message";
+        ui.btnEnc.setAttribute("aria-selected", enc ? "true" : "false");
+        ui.btnDec.setAttribute("aria-selected", enc ? "false" : "true");
+        updateStats();
     },
 
-    setMode(m, quiet) {
-        mode = m;
-        ui.btnEnc.className = m === "encrypt" ? "tab on" : "tab";
-        ui.btnDec.className = m === "decrypt" ? "tab on" : "tab";
-        ui.pass.value = ""; ui.pass.classList.remove("err");
-        passExpanded = false; passRequested = false;
+    setMode(next) {
+        if (next === mode) return;
+        drafts[mode] = ui.input.value;
+        mode = next;
+        ui.input.value = drafts[mode];
         app.syncUi();
-        if (quiet) return;
-        if (app.isShortDecryptMode()) app.clearOut();
-        else if (app.getInputValue().trim()) app.schedule();
-        else app.clearOut();
-    },
-
-    toggleDecryptInputMode() {
-        const cur = app.getInputValue();
-        decryptInputMode = decryptInputMode === "paste" ? "full" : "paste";
-        app.syncUi();
-        if (app.isShortDecryptMode()) {
-            ui.shortInput.value = parsePasteRef(cur) || "";
-            ui.input.value = ""; app.clearOut(); ui.shortInput.focus();
-        } else {
-            ui.input.value = isDuckCode(cur) ? cur : "";
-            ui.shortInput.value = "";
-            if (ui.input.value) app.schedule(); else app.clearOut();
-            ui.input.focus();
-        }
-    },
-
-    togglePass() {
-        if (mode !== "encrypt") return;
-        passExpanded = true; app.syncPassUi(); ui.pass.focus();
-    },
-    requestPass() { passRequested = true; app.syncPassUi(); ui.pass.focus(); },
-
-    clearPass() {
-        ui.pass.value = ""; ui.pass.classList.remove("err");
-        passRequested = false;
-        if (mode === "encrypt") passExpanded = false;
-        app.syncPassUi();
-        if (app.isShortDecryptMode()) app.clearOut(); else app.schedule();
-        ui.pass.focus();
+        app.schedule();
     },
 
     schedule() {
-        clearTimeout(timer); app.syncPassUi();
-        if (app.isShortDecryptMode()) { app.clearOut(); return; }
-        timer = setTimeout(app.process, 250);
+        clearTimeout(timer);
+        gen += 1;
+        setBusy(false);
+        updateStats();
+        const text = ui.input.value;
+        if (!text.trim()) {
+            if (mode === "encrypt") {
+                draftDuckCode = "";
+                publishedId = "";
+                publishedFromDuckCode = "";
+            }
+            showEmpty();
+            ui.pass.classList.remove("err");
+            setStatus(INTRO[mode]);
+            return;
+        }
+        if (mode === "decrypt") {
+            if (isDuckCode(text)) {
+                setStatus("Opening the code…");
+                timer = setTimeout(() => app.process(), 250);
+                return;
+            }
+            showEmpty();
+            if (parsePasteRef(text)) setStatus("Press Decrypt to open this code.");
+            else setStatus("Paste a short code or a full Duck code.");
+            return;
+        }
+        if (ui.pass.value) {
+            draftDuckCode = "";
+            publishedId = "";
+            publishedFromDuckCode = "";
+            showEmpty();
+            setStatus("Passphrase set. Nothing is uploaded until you create a short code. Show the full code if you want to copy it without sharing.");
+            return;
+        }
+        timer = setTimeout(() => app.process(), 200);
     },
 
-    clearOut() {
-        ui.output.value = ""; ui.shortOutput.value = "";
-        ui.pass.classList.remove("err");
-        ui.cardOut.classList.remove("processing");
-        pipeReset(); updateStats();
-    },
+    clearOut() { showEmpty(); },
 
-    async resolveDuckCode(text) {
-        if (decryptInputMode === "full") return text;
-        const ref = parsePasteRef(text);
-        if (!ref) throw new Error("EXPECT_PASTE");
+    async resolveDuckCode(ref) {
         if (pasteCache.has(ref)) return pasteCache.get(ref);
         const res = await fetch(`/api/paste?id=${encodeURIComponent(ref)}`);
         if (res.status === 404) throw new Error("PASTE_NOT_FOUND");
@@ -333,152 +293,238 @@ const app = {
     },
 
     async process() {
-        const myGen = ++gen, text = app.getInputValue(), pass = ui.pass.value;
-        if (!text.trim()) {
-            if (mode === "encrypt") { draftDuckCode = ""; publishedId = ""; publishedFromDuckCode = ""; }
-            app.clearOut();
-            if (mode === "decrypt" && !pass) { passRequested = false; app.syncPassUi(); }
-            return;
-        }
-        if (mode === "decrypt" && decryptInputMode === "full" && !isDuckCode(text)) { app.clearOut(); return; }
-        if (mode === "decrypt" && decryptInputMode === "paste" && !parsePasteRef(text)) { app.clearOut(); return; }
-
-        ui.cardOut.classList.add("processing");
-        pipeRunning(true);
-        setStatus("processing…");
+        const myGen = ++gen;
+        const text = ui.input.value;
+        const pass = ui.pass.value;
+        if (!text.trim()) { app.schedule(); return; }
 
         try {
             if (mode === "encrypt") {
-                pipeActiveStep("compress"); setStatus("compressing…");
+                setStatus("Preparing the code…");
                 const code = await duckEncrypt(text, pass);
                 if (myGen !== gen) return;
-                pipeRunning(false);
-                pipeLitSteps(pass ? ["compress", "encrypt", "encode"] : ["compress", "encode"]);
-                setStatus("encoded"); setBytes(code.length);
                 draftDuckCode = code;
-                if (publishedFromDuckCode !== code) {
-                    publishedId = ""; publishedFromDuckCode = ""; app.setOutputValue("");
-                } else { app.setOutputValue(publishedId); }
+                if (publishedFromDuckCode === code && publishedId) {
+                    showShort(publishedId);
+                    setStatus("Short code ready.", "ok");
+                } else {
+                    publishedId = "";
+                    publishedFromDuckCode = "";
+                    showBody(code, "Full code");
+                    setStatus(pass
+                        ? "Full code is ready and locked with your passphrase. It stays on this page until you create a short code."
+                        : "Full code is ready. It works offline and does not expire. Anyone with it can read the note.", "ok");
+                }
+                ui.pass.classList.remove("err");
             } else {
-                pipeActiveStep("share"); setStatus("fetching…");
-                const code = await app.resolveDuckCode(text);
+                setBusy(true);
+                let code;
+                if (isDuckCode(text)) code = normalize(text);
+                else {
+                    const ref = parsePasteRef(text);
+                    if (!ref) throw new Error("EXPECT_PASTE");
+                    setStatus("Fetching the code…");
+                    code = await app.resolveDuckCode(ref);
+                }
                 if (myGen !== gen) return;
-                pipeActiveStep("encode"); setStatus("decoding…");
-                const res = await duckDecrypt(code, pass);
+                setStatus("Decrypting…");
+                const plain = await duckDecrypt(code, pass);
                 if (myGen !== gen) return;
-                pipeRunning(false);
-                pipeLitSteps(["compress", "encrypt", "encode", "share"]);
-                setStatus("decrypted");
-                app.setOutputValue(res);
-                if (!pass) passRequested = false;
+                showBody(plain, "Message");
+                ui.pass.classList.remove("err");
+                setStatus("Decrypted.", "ok");
             }
-            ui.pass.classList.remove("err"); app.syncPassUi();
         } catch (e) {
             if (myGen !== gen) return;
-            pipeRunning(false);
-            app.clearOut();
-            if (e.message === "MISSING_PASS") { app.requestPass(); app.toast("enter key to unlock", "error"); setStatus("locked"); }
-            else if (e.message === "WRONG_PASS") { app.requestPass(); ui.pass.classList.add("err"); app.toast("incorrect key", "error"); setStatus("wrong key"); }
-            else if (e.message === "INVALID_OR_PASS") { app.requestPass(); app.toast("invalid code or missing key", "error"); setStatus("invalid"); }
-            else if (e.message === "FETCH_FAILED") { app.toast("paste fetch failed", "error"); setStatus("fetch error"); }
-            else if (e.message !== "EXPECT_PASTE" && e.message !== "PASTE_NOT_FOUND") { app.toast("invalid data", "error"); setStatus("error"); }
+            showEmpty();
+            if (e.message === "MISSING_PASS") {
+                ui.pass.classList.add("err");
+                ui.pass.focus();
+                setStatus("This note is locked. Enter the passphrase.", "error");
+            } else if (e.message === "WRONG_PASS") {
+                ui.pass.classList.add("err");
+                ui.pass.focus();
+                setStatus("That passphrase does not open this note.", "error");
+            } else if (e.message === "INVALID_OR_PASS") {
+                ui.pass.classList.add("err");
+                setStatus("That code could not be opened. Check the passphrase.", "error");
+            } else if (e.message === "FETCH_FAILED") {
+                setStatus("Could not fetch that code. Try again.", "error");
+            } else if (e.message === "PASTE_NOT_FOUND") {
+                setStatus("No note is stored for that code.", "error");
+            } else if (e.message !== "EXPECT_PASTE") {
+                setStatus("That is not a valid Duck code.", "error");
+            }
         } finally {
-            if (myGen === gen) { ui.cardOut.classList.remove("processing"); pipeRunning(false); }
+            if (myGen === gen) setBusy(false);
         }
     },
 
-    async copy() {
-        const v = app.getOutputValue(); if (!v) return;
-        await navigator.clipboard.writeText(v);
-        copyMorph();
-        app.toast("copied!", "success");
+    async publish() {
+        const myGen = gen;
+        const code = draftDuckCode;
+        if (!code) return;
+        setBusy(true);
+        setStatus("Creating a short code…");
+        try {
+            const res = await fetch("/api/paste", {
+                method: "POST",
+                headers: { "content-type": "text/plain; charset=utf-8" },
+                body: code,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (myGen !== gen) return;
+            if (!res.ok || !data.id) throw new Error("PUBLISH_FAILED");
+            publishedId = data.id;
+            publishedFromDuckCode = code;
+            showShort(data.id);
+            setStatus("Short code created.", "ok");
+        } catch {
+            if (myGen !== gen) return;
+            if (draftDuckCode) showBody(draftDuckCode, "Full code");
+            setStatus("Could not create a short code. You can still copy the full code.", "error");
+        } finally {
+            if (myGen === gen) setBusy(false);
+        }
     },
 
     async confirm() {
+        if (ui.btnGo.disabled) return;
         clearTimeout(timer);
-        // spin the go button
-        ui.btnGo.classList.add("spin");
-        setTimeout(() => ui.btnGo.classList.remove("spin"), 500);
+        await app.process();
+        if (mode === "encrypt" && draftDuckCode) await app.publish();
+    },
 
-        if (mode === "encrypt") {
-            await app.process(); if (!draftDuckCode) return;
-            ui.cardOut.classList.add("processing");
-            pipeRunning(true);
-            pipeActiveStep("share"); setStatus("publishing…");
-            try {
-                const res = await fetch("/api/paste", {
-                    method: "POST", headers: { "content-type": "text/plain; charset=utf-8" }, body: draftDuckCode,
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.id) throw new Error("PUBLISH_FAILED");
-                publishedId = data.id; publishedFromDuckCode = draftDuckCode;
-                app.setOutputValue(publishedId);
-                pipeRunning(false);
-                pipeLitSteps(["compress", ui.pass.value ? "encrypt" : null, "encode", "share"].filter(Boolean));
-                setStatus("published ✓");
-            } catch { app.toast("publish failed", "error"); setStatus("publish error"); pipeRunning(false); }
-            finally { ui.cardOut.classList.remove("processing"); }
-            return;
-        }
-        if (app.isShortDecryptMode()) await app.process();
+    async showFull() {
+        if (ui.btnShowFull.disabled) return;
+        clearTimeout(timer);
+        await app.process();
     },
 
     applyExternalText(txt) {
-        if (isDuckCode(txt)) {
-            decryptInputMode = "full";
-            if (mode !== "decrypt") app.setMode("decrypt", true);
-            app.syncUi(); ui.input.value = txt; ui.shortInput.value = "";
-            app.schedule(); return;
+        const text = txt ?? "";
+        const asCode = isDuckCode(text) || (parsePasteRef(text) && text.trim().length < 300 && !/\s/.test(text.trim()));
+        if (asCode) {
+            const code = isDuckCode(text) ? text : parsePasteRef(text);
+            if (mode !== "decrypt") drafts[mode] = ui.input.value;
+            drafts.decrypt = code;
+            mode = "decrypt";
+            ui.input.value = code;
+            app.syncUi();
+            app.schedule();
+            return;
         }
-        if (app.isShortDecryptMode()) { ui.shortInput.value = txt.trim(); app.clearOut(); return; }
-        ui.input.value = txt; app.schedule();
+        ui.input.value = text;
+        drafts[mode] = text;
+        app.schedule();
     },
 
     async paste() {
         try { app.applyExternalText(await navigator.clipboard.readText()); }
-        catch { app.toast("paste failed", "error"); }
+        catch { setStatus("Could not read the clipboard. Use the system paste shortcut instead.", "error"); }
     },
 
     clear() {
-        draftDuckCode = ""; publishedId = ""; publishedFromDuckCode = "";
-        ui.input.value = ""; ui.shortInput.value = "";
-        app.clearOut();
-        if (mode === "encrypt") passExpanded = false; else passRequested = false;
-        if (!ui.pass.value) app.syncPassUi();
-        app.activeInput().focus();
+        ui.input.value = "";
+        drafts[mode] = "";
+        ui.pass.classList.remove("err");
+        if (mode === "encrypt") {
+            draftDuckCode = "";
+            publishedId = "";
+            publishedFromDuckCode = "";
+        }
+        showEmpty();
+        app.syncUi();
+        setStatus(INTRO[mode]);
+        ui.input.focus();
     },
 
-    toast(msg, type = "") {
-        const t = document.createElement("div");
-        t.className = `toast ${type}`; t.textContent = msg;
-        ui.toasts.appendChild(t);
-        requestAnimationFrame(() => t.classList.add("show"));
-        setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 2200);
+    clearPass() {
+        ui.pass.value = "";
+        ui.pass.classList.remove("err");
+        ui.btnShowPass.textContent = "Show";
+        ui.btnShowPass.setAttribute("aria-pressed", "false");
+        ui.pass.type = "password";
+        app.schedule();
+        ui.pass.focus();
     },
+
+    togglePassVisible() {
+        const show = ui.pass.type === "password";
+        ui.pass.type = show ? "text" : "password";
+        ui.btnShowPass.textContent = show ? "Hide" : "Show";
+        ui.btnShowPass.setAttribute("aria-pressed", show ? "true" : "false");
+        ui.pass.focus();
+    },
+
+    async copyText(value, button, label) {
+        if (!value) return;
+        try {
+            await navigator.clipboard.writeText(value);
+            button.textContent = "Copied";
+            setTimeout(() => { button.textContent = label; }, 1600);
+        } catch {
+            setStatus("Could not copy automatically. Select the text and copy it.", "error");
+        }
+    },
+
+    copy() {
+        const value = ui.shortOutput.hidden ? ui.output.value : ui.shortOutput.textContent;
+        return app.copyText(value, ui.btnCopy, "Copy");
+    },
+
+    copyFull() { return app.copyText(draftDuckCode, ui.btnCopyFull, "Copy full code"); },
 };
 
-// ── Boot ──
 document.addEventListener("DOMContentLoaded", () => {
     initUI();
-    ui.input.addEventListener("input", () => { app.schedule(); updateStats(); });
-    ui.input.addEventListener("paste", () => setTimeout(() => app.applyExternalText(ui.input.value), 0));
-    ui.shortInput.addEventListener("input", () => { app.clearOut(); updateStats(); });
-    ui.shortInput.addEventListener("paste", () => setTimeout(() => app.applyExternalText(ui.shortInput.value), 0));
-    ui.shortInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); app.confirm(); } });
-    ui.pass.addEventListener("input", () => {
-        if (app.isShortDecryptMode()) { app.syncPassUi(); app.clearOut(); } else app.schedule();
+    themeLabel();
+    ui.btnEnc.addEventListener("click", () => app.setMode("encrypt"));
+    ui.btnDec.addEventListener("click", () => app.setMode("decrypt"));
+    ui.btnTheme.addEventListener("click", () => app.toggleTheme());
+    ui.btnPaste.addEventListener("click", () => app.paste());
+    ui.btnClear.addEventListener("click", () => app.clear());
+    ui.btnShowPass.addEventListener("click", () => app.togglePassVisible());
+    ui.btnClearPass.addEventListener("click", () => app.clearPass());
+    ui.btnGo.addEventListener("click", () => app.confirm());
+    ui.btnShowFull.addEventListener("click", () => app.showFull());
+    ui.btnCopy.addEventListener("click", () => app.copy());
+    ui.btnCopyFull.addEventListener("click", () => app.copyFull());
+    ui.fullDetails.addEventListener("toggle", () => {
+        if (ui.fullDetails.open) fitTextarea(ui.fullCode);
     });
-    // Keyboard shortcuts
+    window.addEventListener("resize", () => {
+        if (!ui.output.hidden) fitTextarea(ui.output);
+        if (ui.fullDetails.open) fitTextarea(ui.fullCode);
+    });
+    ui.input.addEventListener("input", () => app.schedule());
+    ui.pass.addEventListener("input", () => {
+        ui.pass.classList.remove("err");
+        if (mode === "decrypt" && (isDuckCode(ui.input.value) || parsePasteRef(ui.input.value))) {
+            showEmpty();
+            setStatus("Press Decrypt to try this passphrase.");
+            updateStats();
+            return;
+        }
+        app.schedule();
+    });
+    ui.input.addEventListener("keydown", e => {
+        if (e.key === "Enter" && !e.shiftKey && mode === "decrypt" && parsePasteRef(ui.input.value)) {
+            e.preventDefault();
+            app.confirm();
+        }
+    });
     document.addEventListener("keydown", e => {
         const mod = e.metaKey || e.ctrlKey;
-        if (mod && e.key === "e") { e.preventDefault(); app.setMode("encrypt"); }
-        if (mod && e.key === "d") { e.preventDefault(); app.setMode("decrypt"); }
-        if (mod && e.key === "k") { e.preventDefault(); app.togglePass(); }
-        if (mod && e.key === "Enter") { e.preventDefault(); app.confirm(); }
+        if (!mod) return;
+        const key = e.key.toLowerCase();
+        if (key === "e") { e.preventDefault(); app.setMode("encrypt"); }
+        else if (key === "d") { e.preventDefault(); app.setMode("decrypt"); }
+        else if (key === "enter") { e.preventDefault(); app.confirm(); }
     });
     app.syncUi();
-    app.setMode("encrypt", true);
-    updateStats();
+    setStatus(INTRO.encrypt);
+    ui.input.focus();
 });
 
 window.app = app;
