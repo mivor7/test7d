@@ -1,4 +1,6 @@
-const PASTE_BASE_URL = "https://paste.rs";
+const LEGACY_PASTE_URL = "https://paste.rs";
+const PASTES_DEV_URL = "https://api.pastes.dev";
+const USER_AGENT = "duck2 (https://github.com/mivor7/test7d)";
 
 function json(body, status = 200) {
     return new Response(JSON.stringify(body), {
@@ -16,8 +18,11 @@ function extractPasteId(value) {
 
     try {
         const url = new URL(text);
-        const id = url.pathname.replace(/^\/+|\/+$/g, "");
-        if (url.hostname === "paste.rs" && /^[A-Za-z0-9_-]+$/.test(id)) return id;
+        const id = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).pop() || "";
+        const knownHost = url.hostname === "paste.rs"
+            || url.hostname === "pastes.dev"
+            || url.hostname === "api.pastes.dev";
+        if (knownHost && /^[A-Za-z0-9_-]+$/.test(id)) return id;
     } catch {
         // Fall back to raw short code parsing.
     }
@@ -25,28 +30,52 @@ function extractPasteId(value) {
     return /^[A-Za-z0-9_-]+$/.test(text) ? text : "";
 }
 
+function pasteIdFromUpload(upstream, bodyText) {
+    const fromHeader = extractPasteId(upstream.headers.get("location") || "");
+    if (fromHeader) return fromHeader;
+
+    try {
+        const parsed = JSON.parse(bodyText);
+        if (parsed && typeof parsed.key === "string") return extractPasteId(parsed.key);
+    } catch {
+        // pastes.dev also returns the key as plain text in some responses.
+    }
+
+    return extractPasteId(bodyText);
+}
+
+async function readUpstream(url) {
+    return fetch(url, {
+        headers: {
+            accept: "text/plain",
+            "user-agent": USER_AGENT,
+        },
+    });
+}
+
 export async function POST(request) {
     const body = await request.text();
     if (!body.trim()) return json({ error: "Missing body" }, 400);
 
-    const upstream = await fetch(`${PASTE_BASE_URL}/`, {
+    // paste.rs answers POST / with 400, so new shares go to pastes.dev.
+    const upstream = await fetch(`${PASTES_DEV_URL}/post`, {
         method: "POST",
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "user-agent": USER_AGENT,
+        },
         body,
     });
 
-    const location = (await upstream.text()).trim();
-    const id = extractPasteId(location);
-
-    if ((!upstream.ok && upstream.status !== 206) || !id) {
-        return json({ error: "Upstream paste failed" }, 502);
-    }
+    const uploaded = (await upstream.text()).trim();
+    const id = pasteIdFromUpload(upstream, uploaded);
+    if (!upstream.ok || !id) return json({ error: "Upstream paste failed" }, 502);
 
     return json({
         id,
-        url: `${PASTE_BASE_URL}/${id}`,
-        partial: upstream.status === 206,
-    }, upstream.status === 206 ? 206 : 201);
+        url: `https://pastes.dev/${id}`,
+        partial: false,
+    }, 201);
 }
 
 export async function GET(request) {
@@ -54,10 +83,13 @@ export async function GET(request) {
     const id = extractPasteId(url.searchParams.get("id"));
     if (!id) return json({ error: "Missing paste id" }, 400);
 
-    const upstream = await fetch(`${PASTE_BASE_URL}/${id}`);
-    if (upstream.status === 404) return json({ error: "Paste not found" }, 404);
-    if (!upstream.ok) return json({ error: "Upstream fetch failed" }, 502);
+    const current = await readUpstream(`${PASTES_DEV_URL}/${id}`);
+    if (current.ok) return json({ id, code: await current.text() });
 
-    const code = await upstream.text();
-    return json({ id, code });
+    // Codes published before the host change still live on paste.rs.
+    const legacy = await readUpstream(`${LEGACY_PASTE_URL}/${id}`);
+    if (legacy.ok) return json({ id, code: await legacy.text() });
+
+    if (current.status === 404 && legacy.status === 404) return json({ error: "Paste not found" }, 404);
+    return json({ error: "Upstream fetch failed" }, 502);
 }
