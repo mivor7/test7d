@@ -28,6 +28,8 @@ Everything happens **client-side**. The paste service only ever stores ciphertex
 - 🗜️ **Compression** — notes are deflate-compressed before encryption
 - 🔗 **Short codes** — publish to [pastes.dev](https://pastes.dev) for easy sharing (~30-day expiry)
 - 📋 **Full codes** — self-contained, never expire, no server needed to decode
+- 🪄 **Share links** — "Copy link" gives a `page#code` URL that opens the note straight in Decrypt
+- 💪 **Passphrase strength hint** — a rough Weak → Strong guide while you type
 - 🌗 **Dark / light theme** — toggle with persistence, respects system preference
 - ⌨️ **Keyboard shortcuts** — `Ctrl/⌘+Enter` (run), `Ctrl/⌘+E` (encrypt), `Ctrl/⌘+D` (decrypt)
 - 📱 **Responsive** — works on mobile
@@ -45,9 +47,9 @@ Everything happens **client-side**. The paste service only ever stores ciphertex
 ## Project Structure
 
 ```
-├── index.html       # UI (89 lines)
-├── style.css        # Styling with dark/light themes (264 lines)
-├── duck.js          # Crypto engine + app logic (530 lines)
+├── index.html       # UI (119 lines)
+├── style.css        # Styling with dark/light themes (778 lines)
+├── duck.js          # Crypto engine + app logic (604 lines)
 └── api/
     └── paste.mjs    # Serverless API proxy for paste services (95 lines)
 ```
