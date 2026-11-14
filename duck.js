@@ -92,6 +92,9 @@ function parsePasteRef(raw) {
     if (/^https?:\/\//i.test(t)) {
         try {
             const url = new URL(t);
+            // A share link made by this page carries the short code after the #.
+            const frag = url.hash.slice(1);
+            if (url.host === location.host && /^[A-Za-z0-9_-]+$/.test(frag)) return frag;
             const id = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean).pop() || "";
             const host = url.hostname.replace(/^www\./, "");
             if (["paste.rs", "pastes.dev", "api.pastes.dev"].includes(host) && /^[A-Za-z0-9_-]+$/.test(id) && id !== "web") return id;
@@ -123,9 +126,10 @@ function initUI() {
         btnTheme: $("btn-theme"), btnPaste: $("btn-paste"), btnClear: $("btn-clear"),
         btnShowPass: $("btn-show-pass"), btnClearPass: $("btn-clear-pass"),
         btnGo: $("btn-go"), btnShowFull: $("btn-show-full"),
-        btnCopy: $("btn-copy"), btnCopyFull: $("btn-copy-full"),
+        btnCopy: $("btn-copy"), btnCopyFull: $("btn-copy-full"), btnCopyLink: $("btn-copy-link"),
         lblInput: $("lbl-input"), passHint: $("pass-hint"),
-        resultTitle: $("result-title"), resultEmpty: $("result-empty"),
+        strength: $("strength"), strengthLabel: $("strength-label"),
+        result: $("result"), resultTitle: $("result-title"), resultEmpty: $("result-empty"),
         shortOutput: $("short-output"), shortNote: $("short-note"),
         output: $("output"), fullDetails: $("full-details"), fullCode: $("full-code"),
         statChars: $("stat-chars"), status: $("stat-status"),
@@ -139,7 +143,23 @@ function setStatus(text, kind = "") {
 
 function fitTextarea(el) {
     el.style.height = "0px";
-    el.style.height = `${Math.max(72, el.scrollHeight)}px`;
+    el.style.height = `${Math.max(72, el.scrollHeight + el.offsetHeight - el.clientHeight)}px`;
+}
+
+// A rough guide, not a guarantee: length and variety raise the level,
+// repeats and the most common openers lower it.
+const STRENGTH = ["", "Weak", "Fair", "Good", "Strong"];
+function passStrength(p) {
+    if (!p) return 0;
+    if (p.length < 8) return 1;
+    const kinds = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter(re => re.test(p)).length;
+    let score = Math.min(p.length, new Set(p).size * 2) * (1 + kinds) / 2;
+    if (/^\d+$/.test(p) || /^(?:pass(?:word)?|qwerty|letmein|welcome|admin|iloveyou|abc|123)/i.test(p)) score /= 3;
+    return score < 12 ? 1 : score < 20 ? 2 : score < 30 ? 3 : 4;
+}
+
+function shareLink(id) {
+    return `${location.href.split("#")[0]}#${id}`;
 }
 
 function showEmpty() {
@@ -154,6 +174,7 @@ function showEmpty() {
     ui.resultTitle.textContent = mode === "encrypt" ? "Result" : "Message";
     ui.btnCopy.disabled = true;
     ui.btnCopy.textContent = "Copy";
+    ui.btnCopyLink.hidden = true;
 }
 
 function showBody(text, title) {
@@ -166,6 +187,7 @@ function showBody(text, title) {
     ui.output.value = text;
     fitTextarea(ui.output);
     ui.btnCopy.disabled = !text;
+    ui.btnCopyLink.hidden = true;
 }
 
 function showShort(id) {
@@ -179,6 +201,7 @@ function showShort(id) {
     ui.fullCode.value = draftDuckCode;
     if (ui.fullDetails.open) fitTextarea(ui.fullCode);
     ui.btnCopy.disabled = !id;
+    ui.btnCopyLink.hidden = !id;
 }
 
 function updateStats() {
@@ -192,6 +215,15 @@ function updateStats() {
     ui.btnShowFull.hidden = !lockLocal;
     ui.btnShowFull.disabled = busy || !hasText;
     ui.btnClearPass.hidden = !ui.pass.value;
+    const level = mode === "encrypt" ? passStrength(ui.pass.value) : 0;
+    ui.strength.hidden = !level;
+    ui.strength.dataset.level = level;
+    ui.strengthLabel.textContent = STRENGTH[level];
+    ui.passHint.textContent = mode === "decrypt"
+        ? "Enter it here if the note was locked. Share it separately from the code."
+        : level
+            ? "Only someone with this passphrase can open the note. Send it separately from the code."
+            : "Optional. Leave it blank and anyone with the code can read the note.";
 }
 
 function setBusy(on) {
@@ -202,25 +234,33 @@ function setBusy(on) {
 
 function themeLabel() {
     const light = document.documentElement.classList.contains("light");
-    ui.btnTheme.textContent = light ? "Dark theme" : "Light theme";
+    const label = light ? "Switch to dark theme" : "Switch to light theme";
+    ui.btnTheme.setAttribute("aria-label", label);
+    ui.btnTheme.title = label;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = light ? "#f3f5fb" : "#080a10";
 }
 
 const app = {
     toggleTheme() {
         const light = !document.documentElement.classList.contains("light");
-        document.documentElement.classList.toggle("light", light);
+        const apply = () => {
+            document.documentElement.classList.toggle("light", light);
+            themeLabel();
+        };
         try { localStorage.setItem("duck2-theme", light ? "light" : "dark"); } catch { /* private mode */ }
-        themeLabel();
+        // Cross-fade the two themes where the browser can.
+        const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (document.startViewTransition && !calm) document.startViewTransition(apply);
+        else apply();
     },
 
     syncUi() {
         const enc = mode === "encrypt";
+        document.documentElement.dataset.mode = mode;
         ui.lblInput.textContent = enc ? "Message" : "Code";
         ui.input.placeholder = enc ? "Write the note you want to share" : "Paste a short code or a full Duck code";
         ui.pass.placeholder = enc ? "Leave blank to skip" : "Only if the note was locked";
-        ui.passHint.textContent = enc
-            ? "Optional. Leave it blank and anyone with the code can read the note."
-            : "Enter it here if the note was locked. Share it separately from the code.";
         if (ui.btnGo.dataset.busy !== "1") ui.btnGo.textContent = enc ? "Create short code" : "Decrypt";
         ui.resultEmpty.textContent = enc ? "The code will show up here." : "The note will show up here.";
         if (!ui.resultEmpty.hidden) ui.resultTitle.textContent = enc ? "Result" : "Message";
@@ -257,7 +297,7 @@ const app = {
         }
         if (mode === "decrypt") {
             if (isDuckCode(text)) {
-                setStatus("Opening the code…");
+                setStatus("Opening the code…", "busy");
                 timer = setTimeout(() => app.process(), 250);
                 return;
             }
@@ -300,7 +340,7 @@ const app = {
 
         try {
             if (mode === "encrypt") {
-                setStatus("Preparing the code…");
+                setStatus("Preparing the code…", "busy");
                 const code = await duckEncrypt(text, pass);
                 if (myGen !== gen) return;
                 draftDuckCode = code;
@@ -323,11 +363,11 @@ const app = {
                 else {
                     const ref = parsePasteRef(text);
                     if (!ref) throw new Error("EXPECT_PASTE");
-                    setStatus("Fetching the code…");
+                    setStatus("Fetching the code…", "busy");
                     code = await app.resolveDuckCode(ref);
                 }
                 if (myGen !== gen) return;
-                setStatus("Decrypting…");
+                setStatus("Decrypting…", "busy");
                 const plain = await duckDecrypt(code, pass);
                 if (myGen !== gen) return;
                 showBody(plain, "Message");
@@ -365,7 +405,7 @@ const app = {
         const code = draftDuckCode;
         if (!code) return;
         setBusy(true);
-        setStatus("Creating a short code…");
+        setStatus("Creating a short code…", "busy");
         try {
             const res = await fetch("/api/paste", {
                 method: "POST",
@@ -393,6 +433,9 @@ const app = {
         clearTimeout(timer);
         await app.process();
         if (mode === "encrypt" && draftDuckCode) await app.publish();
+        // On a phone the result sits below the fold, so bring it into view,
+        // unless the passphrase field was just focused to ask for input.
+        if (document.activeElement !== ui.pass) ui.result.scrollIntoView({ block: "nearest", behavior: "smooth" });
     },
 
     async showFull() {
@@ -442,18 +485,21 @@ const app = {
     clearPass() {
         ui.pass.value = "";
         ui.pass.classList.remove("err");
-        ui.btnShowPass.textContent = "Show";
-        ui.btnShowPass.setAttribute("aria-pressed", "false");
-        ui.pass.type = "password";
+        app.setPassVisible(false);
         app.schedule();
         ui.pass.focus();
     },
 
-    togglePassVisible() {
-        const show = ui.pass.type === "password";
+    setPassVisible(show) {
+        const label = show ? "Hide passphrase" : "Show passphrase";
         ui.pass.type = show ? "text" : "password";
-        ui.btnShowPass.textContent = show ? "Hide" : "Show";
+        ui.btnShowPass.setAttribute("aria-label", label);
+        ui.btnShowPass.title = label;
         ui.btnShowPass.setAttribute("aria-pressed", show ? "true" : "false");
+    },
+
+    togglePassVisible() {
+        app.setPassVisible(ui.pass.type === "password");
         ui.pass.focus();
     },
 
@@ -462,7 +508,12 @@ const app = {
         try {
             await navigator.clipboard.writeText(value);
             button.textContent = "Copied";
-            setTimeout(() => { button.textContent = label; }, 1600);
+            button.classList.add("done");
+            clearTimeout(button.copyTimer);
+            button.copyTimer = setTimeout(() => {
+                button.textContent = label;
+                button.classList.remove("done");
+            }, 1600);
         } catch {
             setStatus("Could not copy automatically. Select the text and copy it.", "error");
         }
@@ -474,6 +525,20 @@ const app = {
     },
 
     copyFull() { return app.copyText(draftDuckCode, ui.btnCopyFull, "Copy full code"); },
+
+    copyLink() {
+        const id = ui.shortOutput.hidden ? "" : ui.shortOutput.textContent;
+        return app.copyText(id && shareLink(id), ui.btnCopyLink, "Copy link");
+    },
+
+    // Opening a share link (page#code) drops straight into Decrypt and runs it.
+    openFromHash() {
+        let ref = "";
+        try { ref = decodeURIComponent(location.hash.slice(1)).trim(); } catch { return; }
+        if (!ref || !(isDuckCode(ref) || parsePasteRef(ref))) return;
+        app.applyExternalText(ref);
+        app.confirm();
+    },
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -490,6 +555,8 @@ document.addEventListener("DOMContentLoaded", () => {
     ui.btnShowFull.addEventListener("click", () => app.showFull());
     ui.btnCopy.addEventListener("click", () => app.copy());
     ui.btnCopyFull.addEventListener("click", () => app.copyFull());
+    ui.btnCopyLink.addEventListener("click", () => app.copyLink());
+    ui.shortOutput.addEventListener("click", () => app.copy());
     ui.fullDetails.addEventListener("toggle", () => {
         if (ui.fullDetails.open) fitTextarea(ui.fullCode);
     });
@@ -522,9 +589,16 @@ document.addEventListener("DOMContentLoaded", () => {
         else if (key === "d") { e.preventDefault(); app.setMode("decrypt"); }
         else if (key === "enter") { e.preventDefault(); app.confirm(); }
     });
+    // Show the modifier key this platform actually uses.
+    const modKey = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl";
+    document.querySelectorAll("kbd.mod").forEach(el => { el.textContent = modKey; });
+    ui.btnGo.dataset.kbd = `${modKey} ↵`;
+
     app.syncUi();
     setStatus(INTRO.encrypt);
     ui.input.focus();
+    window.addEventListener("hashchange", () => app.openFromHash());
+    app.openFromHash();
 });
 
 window.app = app;
