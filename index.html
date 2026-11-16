@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Duck2 — encrypt a note, share a short code</title>
-    <meta name="description" content="Encrypt a note in the browser and share it as a short code. Add a passphrase to lock it." />
+    <title>Duck2 — encrypt a note, share a short link</title>
+    <meta name="description" content="Encrypt a note or an image in the browser and share it as a short dar.vin link. Add a passphrase to lock it." />
     <meta name="theme-color" content="#080a10" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%234a66f0'/%3E%3Cstop offset='1' stop-color='%236d4cf5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Ccircle cx='19' cy='12' r='5' fill='%23ffd43b'/%3E%3Cpath d='M5.5 17c2 1.2 4.4 1.3 6.8.7 1.6-.4 3-.5 4.7-.5h2c3.6 0 6 2 6 4.6 0 2.9-2.6 4.7-6.4 4.7h-6c-4.8 0-7.7-3.6-7.1-9.5z' fill='%23ffd43b'/%3E%3Cpath d='M23.2 11h3.3c.7 0 1 .8.6 1.3l-1 1.2c-.5.6-1.2.9-2 .9h-1.4z' fill='%23ff922b'/%3E%3Ccircle cx='20' cy='11.2' r='1.05' fill='%231a1d2b'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -17,6 +17,8 @@
             var preferLight = window.matchMedia("(prefers-color-scheme: light)").matches;
             if (savedTheme === "light" || (!savedTheme && preferLight)) document.documentElement.classList.add("light");
         } catch (e) {}
+        // A share link opens the viewer, not the editor: decide before first paint.
+        if (location.hash.length > 1) document.documentElement.dataset.view = "share";
     </script>
 </head>
 <body>
@@ -44,10 +46,10 @@
         <button type="button" class="icon-btn" id="btn-theme" aria-label="Switch to light theme" title="Switch to light theme"></button>
     </header>
 
-    <main class="wrap">
+    <main class="wrap" id="app-main">
         <div class="hero">
-            <h1>Encrypt a note. <em>Share a short code.</em></h1>
-            <p class="brand-tag">Your note is turned into a code right in your browser. Add a passphrase to lock it with AES-256-GCM.</p>
+            <h1>Encrypt a note. <em>Share a short link.</em></h1>
+            <p class="brand-tag">Your note or image is turned into a dar.vin link right in your browser. Add a passphrase to lock it with AES-256-GCM.</p>
         </div>
 
         <section class="card" id="composer" aria-labelledby="lbl-input">
@@ -55,11 +57,18 @@
                 <label id="lbl-input" for="input">Message</label>
                 <div class="card-actions">
                     <span class="meta" id="stat-chars">0 characters</span>
+                    <button type="button" class="btn ghost sm" id="btn-image" data-icon="image" hidden>Image</button>
                     <button type="button" class="btn ghost sm" id="btn-paste" data-icon="paste">Paste</button>
                     <button type="button" class="btn ghost sm" id="btn-clear" data-icon="clear">Clear</button>
                 </div>
             </div>
+            <input type="file" id="file-input" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp" hidden />
             <textarea id="input" rows="6" placeholder="Write the note you want to share" spellcheck="false" autocomplete="off"></textarea>
+            <figure class="attachment" id="attachment" hidden>
+                <img id="attachment-img" alt="" />
+                <figcaption class="meta" id="attachment-meta"></figcaption>
+                <button type="button" class="icon-btn" id="btn-remove-image" aria-label="Remove image" title="Remove image"></button>
+            </figure>
 
             <div class="field">
                 <div class="card-head">
@@ -73,15 +82,15 @@
                     <input type="password" id="pass" autocomplete="off" spellcheck="false" placeholder="Leave blank to skip" />
                     <div class="pass-tools">
                         <button type="button" class="icon-btn" id="btn-clear-pass" aria-label="Remove passphrase" title="Remove passphrase" hidden></button>
-                        <button type="button" class="icon-btn" id="btn-show-pass" aria-pressed="false" aria-label="Show passphrase" title="Show passphrase"></button>
+                        <button type="button" class="icon-btn eye-btn" id="btn-show-pass" aria-pressed="false" aria-label="Show passphrase" title="Show passphrase"></button>
                     </div>
                 </div>
-                <p class="hint" id="pass-hint">Optional. Leave it blank and anyone with the code can read the note.</p>
+                <p class="hint" id="pass-hint">Optional. Leave it blank and anyone with the link can read the note.</p>
             </div>
 
             <div class="actions">
-                <button type="button" class="btn primary" id="btn-go" disabled>Create short code</button>
-                <button type="button" class="btn" id="btn-show-full" hidden>Show full code</button>
+                <button type="button" class="btn primary" id="btn-go" disabled>Create link</button>
+                <button type="button" class="btn" id="btn-show-full">Show full code</button>
             </div>
         </section>
 
@@ -89,21 +98,71 @@
             <div class="card-head">
                 <h2 id="result-title">Result</h2>
                 <div class="card-actions">
-                    <button type="button" class="btn ghost sm" id="btn-copy-link" data-icon="link" hidden>Copy link</button>
+                    <a class="btn ghost sm" id="btn-open" data-icon="external" target="_blank" rel="noopener" hidden>Open</a>
                     <button type="button" class="btn sm" id="btn-copy" data-icon="copy" disabled>Copy</button>
                 </div>
             </div>
-            <p class="empty" id="result-empty">The code will show up here.</p>
+            <p class="empty" id="result-empty">Your link will show up here.</p>
             <p class="short-code" id="short-output" title="Click to copy" hidden></p>
-            <p class="note" id="short-note" hidden>Anyone with this code can download the note. Short codes expire after about 30 days. Send the passphrase separately if you set one. The full code does not expire.</p>
             <textarea id="output" readonly hidden spellcheck="false" aria-labelledby="result-title"></textarea>
-            <details id="full-details" hidden>
-                <summary>Show full code</summary>
-                <textarea id="full-code" readonly spellcheck="false"></textarea>
-                <button type="button" class="btn sm" id="btn-copy-full" data-icon="copy">Copy full code</button>
-            </details>
-            <p class="status" id="stat-status" role="status">Write a note. The full code appears here, then you can create a short code to send.</p>
+            <figure class="output-image" id="output-image" hidden><img id="output-img" alt="Decrypted image" /></figure>
+            <p class="note" id="short-note" hidden></p>
+            <div class="alts" id="alts" hidden>
+                <p class="alts-title">Other ways to share</p>
+                <div class="alts-row" role="group" aria-label="Other ways to share">
+                    <button type="button" class="btn sm" data-alt="long" data-icon="link" aria-expanded="false" aria-controls="alt-panel">Full link</button>
+                    <button type="button" class="btn sm" data-alt="imgur" data-icon="image" aria-expanded="false" aria-controls="alt-panel">Imgur link</button>
+                    <button type="button" class="btn sm" data-alt="paste" data-icon="file" aria-expanded="false" aria-controls="alt-panel">pastes.dev code</button>
+                    <button type="button" class="btn sm" data-alt="full" data-icon="code" aria-expanded="false" aria-controls="alt-panel">Full code</button>
+                </div>
+                <div class="alt-panel" id="alt-panel" hidden>
+                    <textarea id="alt-value" readonly spellcheck="false" aria-labelledby="alt-hint"></textarea>
+                    <div class="alt-foot">
+                        <p class="hint" id="alt-hint"></p>
+                        <button type="button" class="btn sm" id="btn-copy-alt" data-icon="copy">Copy</button>
+                    </div>
+                </div>
+            </div>
+            <p class="status" id="stat-status" role="status">Write a note or add an image, then create a link to send.</p>
         </section>
+    </main>
+
+    <main class="viewer" id="viewer">
+        <section class="card view-card" aria-live="polite">
+            <p class="view-loading" id="view-loading">Opening…</p>
+
+            <form class="view-lock" id="view-lock" hidden>
+                <span class="view-lock-icon" aria-hidden="true"></span>
+                <h1 id="view-lock-title">This note is locked</h1>
+                <p class="hint">Enter the passphrase to open it.</p>
+                <div class="pass-row">
+                    <input type="password" id="view-pass" autocomplete="off" spellcheck="false" placeholder="Passphrase" aria-labelledby="view-lock-title" />
+                    <div class="pass-tools">
+                        <button type="button" class="icon-btn eye-btn" id="view-show-pass" aria-pressed="false" aria-label="Show passphrase" title="Show passphrase"></button>
+                    </div>
+                </div>
+                <button type="submit" class="btn primary" id="view-unlock">Unlock</button>
+                <p class="view-error" id="view-error" role="alert" hidden></p>
+            </form>
+
+            <div id="view-content" hidden>
+                <div class="card-head">
+                    <h1 id="view-title">Note</h1>
+                    <div class="card-actions">
+                        <a class="btn sm" id="view-download" data-icon="download" hidden>Download</a>
+                        <button type="button" class="btn sm" id="view-copy" data-icon="copy">Copy</button>
+                    </div>
+                </div>
+                <div class="view-text" id="view-text"></div>
+                <img class="view-img" id="view-img" alt="Shared image" hidden />
+            </div>
+
+            <div class="view-fail" id="view-fail" hidden>
+                <h1>This link can’t be opened</h1>
+                <p class="hint" id="view-fail-msg"></p>
+            </div>
+        </section>
+        <p class="view-foot"><a href="./" id="view-home">Share your own note with Duck2</a></p>
     </main>
 
     <footer class="footer">
@@ -114,6 +173,7 @@
         </ul>
     </footer>
 
+    <script src="duck-core.js"></script>
     <script src="duck.js"></script>
 </body>
 </html>
