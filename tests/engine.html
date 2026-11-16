@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Duck2 engine tests</title>
+    <style>
+        body { margin: 24px; background: #0b0d14; color: #e8ebf3; font: 14px/1.5 ui-monospace, Menlo, monospace; }
+        h1 { font-size: 16px; }
+        li.ok::marker { content: "✓  "; color: #5fd38d; }
+        li.fail::marker { content: "✗  "; color: #ff7a7a; }
+        pre { white-space: pre-wrap; color: #ffb3b3; margin: 4px 0 10px; }
+    </style>
+</head>
+<body>
+    <h1 id="summary">Running…</h1>
+    <ol id="list"></ol>
+    <script src="../duck-core.js"></script>
+    <script>
+    // Open this page in a browser to run the engine tests (no server needed).
+    const results = [];
+    const eq = (got, want, what = "") => {
+        if (got !== want) throw new Error(`${what} expected ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+    };
+    const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    const rejects = async (fn, message) => {
+        try { await fn(); } catch (e) { eq(e.message, message, "error"); return; }
+        throw new Error(`expected ${message}, but it succeeded`);
+    };
+    const random = n => {
+        const out = new Uint8Array(n);
+        for (let i = 0; i < n; i += 65536) crypto.getRandomValues(out.subarray(i, Math.min(n, i + 65536)));
+        return out;
+    };
+    async function test(name, fn) {
+        try { await fn(); results.push({ name, ok: true }); }
+        catch (e) { results.push({ name, ok: false, error: String(e?.stack || e) }); }
+    }
+
+    // Codes made by the previous duck.js (before the engine split), which must keep opening.
+    const LEGACY = {
+        note: "Legacy note: héllo 🦆\nline two",
+        pass: "hunter2!",
+        plain: "l]1=y]gqULoS?vo+p=C{qPH&ggaaCR&LUO8zcP8?D8Rb%<[O(R1",
+        locked: "l]1=zdZwHDp1uQqy#wrE4Eg$X.k)qQ<8npM*QH^%1nO4jEtEQBo9JL}fq(S-PQoenxDb%CsT+h?K/WFE1N#:&TPexi3*gBItBEHA%7.Ah1",
+    };
+
+    // Re-save a container PNG the way an image host might: other row filters,
+    // optional alpha channel, extra chunks, maximum compression.
+    async function resave(blob, { filters, rgba }) {
+        const u8 = new Uint8Array(await blob.arrayBuffer()), view = new DataView(u8.buffer);
+        let pos = 8, width, height; const idat = [];
+        while (pos < u8.length) {
+            const len = view.getUint32(pos), type = String.fromCharCode(...u8.subarray(pos + 4, pos + 8));
+            if (type === "IHDR") { width = view.getUint32(pos + 8); height = view.getUint32(pos + 12); }
+            if (type === "IDAT") idat.push(u8.subarray(pos + 8, pos + 8 + len));
+            pos += 12 + len;
+        }
+        const raw = await pipeBytes(new Uint8Array(await new Blob(idat).arrayBuffer()), new DecompressionStream("deflate"));
+        const inBpp = 3, bpp = rgba ? 4 : 3, inStride = width * inBpp, stride = width * bpp;
+        const out = new Uint8Array((stride + 1) * height);
+        let prev = new Uint8Array(stride);
+        for (let y = 0; y < height; y++) {
+            const src = raw.subarray(y * (inStride + 1) + 1, (y + 1) * (inStride + 1));
+            const row = new Uint8Array(stride);
+            for (let x = 0, o = 0; x < inStride; x += 3) {
+                row[o++] = src[x]; row[o++] = src[x + 1]; row[o++] = src[x + 2];
+                if (rgba) row[o++] = 255;
+            }
+            const f = filters[y % filters.length], base = y * (stride + 1);
+            out[base] = f;
+            for (let x = 0; x < stride; x++) {
+                const a = x >= bpp ? row[x - bpp] : 0, b = prev[x], c = x >= bpp ? prev[x - bpp] : 0;
+                const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+                const p = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][f];
+                out[base + 1 + x] = (row[x] - p) & 255;
+            }
+            prev = row;
+        }
+        const ihdr = new Uint8Array(13), hv = new DataView(ihdr.buffer);
+        hv.setUint32(0, width); hv.setUint32(4, height); ihdr[8] = 8; ihdr[9] = rgba ? 6 : 2;
+        return new Blob([new Uint8Array(PNG_SIG), pngChunk("IHDR", ihdr), pngChunk("sRGB", new Uint8Array([0])),
+            pngChunk("IDAT", await pipeBytes(out, new CompressionStream("deflate"))), pngChunk("IEND", new Uint8Array(0))]);
+    }
+
+    (async () => {
+        await test("Z85 round-trips every length", () => {
+            for (let n = 0; n <= 40; n++) {
+                const data = random(n), code = z85Encode(data);
+                if (!same(z85Decode(code), data)) throw new Error(`length ${n}`);
+                if (n && !isDuckCode(code)) throw new Error(`isDuckCode(${n})`);
+            }
+        });
+        await test("base64url round-trips and rejects junk", () => {
+            for (let n = 0; n <= 40; n++) {
+                const data = random(n), text = b64urlEncode(data);
+                if (/[+/=]/.test(text) || !same(b64urlDecode(text), data)) throw new Error(`length ${n}`);
+            }
+            for (const bad of ["a", "ab+c", "ab/c", "abc=", "a b"]) {
+                let threw = false;
+                try { b64urlDecode(bad); } catch { threw = true; }
+                if (!threw) throw new Error(`accepted ${bad}`);
+            }
+        });
+        await test("unlocked note opens without a passphrase", async () => {
+            const text = "Hello 🦆\n\ttabs, ünïcode and a long tail " + "x".repeat(5000);
+            const env = await sealNote(text, "");
+            eq(isLocked(env), false, "isLocked");
+            eq(await openNote(env, ""), text);
+            eq(await duckDecrypt(await duckEncrypt(text, ""), ""), text);
+        });
+        await test("locked note needs the right passphrase", async () => {
+            const env = await sealNote("secret", "correct horse");
+            eq(isLocked(env), true, "isLocked");
+            eq(await openNote(env, "correct horse"), "secret");
+            await rejects(() => openNote(env, ""), "MISSING_PASS");
+            await rejects(() => openNote(env, "wrong"), "WRONG_PASS");
+        });
+        await test("codes from the previous version still open", async () => {
+            eq(await duckDecrypt(LEGACY.plain, ""), LEGACY.note, "plain");
+            eq(await duckDecrypt(LEGACY.locked, LEGACY.pass), LEGACY.note, "locked");
+            await rejects(() => duckDecrypt(LEGACY.locked, ""), "MISSING_PASS");
+        });
+        await test("new codes keep the same envelope layout", async () => {
+            const plain = await sealNote("x", ""), locked = await sealNote("x", "p");
+            eq([...plain.subarray(0, 4)].join(), "68,50,1,0", "plain header");
+            eq([...locked.subarray(0, 4)].join(), "68,50,1,1", "locked header");
+        });
+        await test("images round-trip, and odd types are never rendered", async () => {
+            const bytes = random(5000);
+            for (const pass of ["", "pw"]) {
+                const env = await sealFile(bytes, "image/webp", pass);
+                eq(isLocked(env), !!pass, "isLocked");
+                const back = await openFile(env, pass);
+                eq(back.mime, "image/webp", "mime");
+                if (!same(back.bytes, bytes)) throw new Error("bytes differ");
+            }
+            eq((await openFile(await sealFile(bytes, "image/svg+xml", ""), "")).mime, "application/octet-stream", "svg");
+            eq((await openFile(await sealFile(bytes, "text/html", ""), "")).mime, "application/octet-stream", "html");
+            await rejects(async () => openFile(await sealFile(bytes, "image/png", "pw"), "nope"), "WRONG_PASS");
+            await rejects(async () => openNote(await sealFile(bytes, "image/png", ""), ""), "IS_FILE");
+        });
+        await test("PNG container round-trips many sizes", async () => {
+            for (const n of [0, 1, 2, 3, 4, 5, 100, 1000, 65537, 300000]) {
+                const payload = random(n);
+                if (!same(await unpackPng(await (await packPng(payload)).arrayBuffer()), payload)) throw new Error(`size ${n}`);
+            }
+        });
+        await test("PNG container is a real image the browser can decode", async () => {
+            const blob = await packPng(random(120000));
+            const bmp = await createImageBitmap(blob);
+            const view = new DataView(await blob.slice(16, 24).arrayBuffer());
+            eq(bmp.width, view.getUint32(0), "width");
+            eq(bmp.height, view.getUint32(4), "height");
+        });
+        await test("PNG container survives a re-save with other filters and alpha", async () => {
+            const payload = random(40000), blob = await packPng(payload);
+            for (const opts of [{ filters: [1], rgba: false }, { filters: [2], rgba: false }, { filters: [3], rgba: false },
+                { filters: [4], rgba: false }, { filters: [0, 1, 2, 3, 4], rgba: false }, { filters: [4, 3, 2, 1, 0], rgba: true }]) {
+                const back = await unpackPng(await (await resave(blob, opts)).arrayBuffer());
+                if (!same(back, payload)) throw new Error(JSON.stringify(opts));
+            }
+        });
+        await test("PNG container rejects damaged or foreign files", async () => {
+            const good = new Uint8Array(await (await packPng(random(1000))).arrayBuffer());
+            await rejects(() => unpackPng(good.slice(0, 40)), "CORRUPT");
+            await rejects(() => unpackPng(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5])), "CORRUPT");
+            const lying = good.slice(); new DataView(lying.buffer).setUint32(33 + 8, 0); // break the IDAT stream
+            let threw = false;
+            try { await unpackPng(lying); } catch { threw = true; }
+            if (!threw) throw new Error("accepted a damaged IDAT");
+        });
+        await test("a locked note survives the n~ link", async () => {
+            const env = await sealNote("via link", "pw");
+            const ref = parseShareRef(`https://duck.example/#${LINK_NOTE}${b64urlEncode(env)}`);
+            eq(ref.kind, "inline");
+            eq(await openNote(ref.data, "pw"), "via link");
+        });
+        await test("links and codes are recognised", () => {
+            const host = "duck.example";
+            const kind = (raw, opts) => { const r = parseShareRef(raw, { host, ...opts }); return r ? r.kind + ":" + (r.id || r.slug || r.url || r.data.length) : null; };
+            const cases = [
+                ["n~AAEC", "inline:3"],
+                ["  n~AAEC\n", "inline:3"],
+                ["n~", null],
+                ["n~a", null],
+                ["i~AbCdEf1", "image:AbCdEf1"],
+                ["i~bad!", null],
+                [LEGACY.plain, `inline:${z85Decode(LEGACY.plain).length}`],
+                ["https://dar.vin/abc12", "darvin:abc12"],
+                ["dar.vin/abc12", "darvin:abc12"],
+                ["https://www.dar.vin/abc12", "darvin:abc12"],
+                ["https://dar.vin/en/pricing", null],
+                ["https://i.imgur.com/AbCdEf1.png", "direct:https://i.imgur.com/AbCdEf1.png"],
+                ["https://i.imgur.com/AbCdEf1", null],
+                ["https://pastes.dev/aB3xY9z", "paste:aB3xY9z"],
+                ["https://paste.rs/Xyz", "paste:Xyz"],
+                ["aB3xY9z", "paste:aB3xY9z"],
+                ["https://elsewhere.example/#n~AAEC", "inline:3"],
+                ["https://elsewhere.example/#i~AbCdEf1", "image:AbCdEf1"],
+                [`https://${host}/#aB3xY9z`, "paste:aB3xY9z"],
+                ["https://elsewhere.example/#aB3xY9z", null],
+                [`https://${host}/#${encodeURIComponent(LEGACY.plain)}`, `inline:${z85Decode(LEGACY.plain).length}`],
+                ["hello world", null],
+                ["", null],
+            ];
+            for (const [raw, want] of cases) eq(kind(raw), want, JSON.stringify(raw));
+            eq(kind("https://dar.vin/abc12", { allowDarvin: false }), null, "allowDarvin");
+        });
+
+        const failed = results.filter(r => !r.ok);
+        document.getElementById("summary").textContent = failed.length
+            ? `${failed.length} of ${results.length} failed`
+            : `All ${results.length} passed`;
+        const list = document.getElementById("list");
+        for (const r of results) {
+            const li = document.createElement("li");
+            li.className = r.ok ? "ok" : "fail";
+            li.textContent = r.name;
+            if (!r.ok) { const pre = document.createElement("pre"); pre.textContent = r.error; li.append(pre); }
+            list.append(li);
+        }
+        const report = new URLSearchParams(location.search).get("report");
+        if (report) fetch(`/__results/${report}`, { method: "POST", body: JSON.stringify({ passed: results.length - failed.length, failed }) });
+    })();
+    </script>
+</body>
+</html>

@@ -46,6 +46,11 @@
     --i-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4M12 8h.01'/%3E%3C/svg%3E");
     --i-ok: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E");
     --i-alert: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 8v4M12 16h.01'/%3E%3C/svg%3E");
+    --i-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='9' cy='9' r='2'/%3E%3Cpath d='m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'/%3E%3C/svg%3E");
+    --i-external: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6'/%3E%3Cpath d='M10 14 21 3'/%3E%3Cpath d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3C/svg%3E");
+    --i-download: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3Cpath d='M12 15V3'/%3E%3C/svg%3E");
+    --i-code: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 18 6-6-6-6'/%3E%3Cpath d='m8 6-6 6 6 6'/%3E%3C/svg%3E");
+    --i-file: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 2v6h6'/%3E%3Cpath d='M16 13H8M16 17H8'/%3E%3C/svg%3E");
     --i-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E");
 }
 
@@ -129,7 +134,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 ::selection { background: rgba(109, 76, 245, 0.35); }
 
-[data-icon]::before, .icon-btn::before, .status::before, .empty::before, details summary::before {
+[data-icon]::before, .icon-btn::before, .status::before, .empty::before, .view-lock-icon::before {
     content: "";
     flex: none;
     width: 16px;
@@ -144,6 +149,11 @@ button { -webkit-tap-highlight-color: transparent; }
 [data-icon="paste"] { --icon: var(--i-paste); }
 [data-icon="clear"] { --icon: var(--i-x); }
 [data-icon="link"] { --icon: var(--i-link); }
+[data-icon="image"] { --icon: var(--i-image); }
+[data-icon="external"] { --icon: var(--i-external); }
+[data-icon="download"] { --icon: var(--i-download); }
+[data-icon="code"] { --icon: var(--i-code); }
+[data-icon="file"] { --icon: var(--i-file); }
 
 /* ── Layout ─────────────────────────────── */
 .header, .wrap, .footer {
@@ -269,6 +279,7 @@ html[data-mode="decrypt"] .segment::before { transform: translateX(100%); }
     color: var(--text);
     font-size: 0.94rem;
     font-weight: 600;
+    text-decoration: none;
     white-space: nowrap;
     cursor: pointer;
     transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.2s, filter 0.15s, transform 0.08s;
@@ -370,9 +381,9 @@ html[data-mode="decrypt"] .segment::before { transform: translateX(100%); }
 .icon-btn:active { transform: scale(0.94); }
 #btn-theme { --icon: var(--i-sun); }
 html.light #btn-theme { --icon: var(--i-moon); }
-#btn-show-pass { --icon: var(--i-eye); }
-#btn-show-pass[aria-pressed="true"] { --icon: var(--i-eye-off); }
-#btn-clear-pass { --icon: var(--i-x); }
+.eye-btn { --icon: var(--i-eye); }
+.eye-btn[aria-pressed="true"] { --icon: var(--i-eye-off); }
+#btn-clear-pass, #btn-remove-image { --icon: var(--i-x); }
 
 /* ── Cards ──────────────────────────────── */
 .card {
@@ -407,7 +418,7 @@ html.light #btn-theme { --icon: var(--i-moon); }
     min-height: 34px;
     margin-bottom: 10px;
 }
-.card-head label, .card-head h2 {
+.card-head label, .card-head h2, .card-head h1 {
     margin: 0;
     font-size: 0.95rem;
     font-weight: 600;
@@ -450,16 +461,57 @@ textarea:focus, .pass-row input:focus {
     border-color: var(--primary);
     box-shadow: 0 0 0 4px var(--ring);
 }
-#output, #full-code {
+#output, #alt-value {
     min-height: 72px;
     resize: none;
     overflow: hidden;
 }
 /* Codes have no word boundaries worth keeping, so fill each line. */
-html[data-mode="encrypt"] #output, #full-code { word-break: break-all; }
+html[data-mode="encrypt"] #output, #alt-value { word-break: break-all; }
 #output:not([hidden]) { animation: reveal 0.35s ease both; }
 textarea[readonly] { cursor: text; opacity: 1; }
 textarea::placeholder, input::placeholder { color: var(--text-faint); opacity: 1; }
+
+/* An attached image takes the note's place. */
+.attachment {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 160px;
+    margin: 0;
+    padding: 16px 48px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--field);
+}
+.attachment:not([hidden]) { animation: reveal 0.3s ease both; }
+.attachment img {
+    display: block;
+    max-width: 100%;
+    max-height: 240px;
+    border-radius: 8px;
+    box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.6);
+}
+.attachment .meta {
+    max-width: 100%;
+    margin: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#btn-remove-image {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+}
+#composer.dragging {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px var(--ring), var(--card-shadow);
+}
 
 .field { margin-top: 18px; }
 .pass-row { position: relative; }
@@ -588,30 +640,61 @@ html[data-mode="decrypt"] .empty::before { --icon: var(--i-unlock); }
     color: var(--ok);
 }
 
-details {
-    margin-top: 14px;
+.output-image {
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--field);
+}
+.output-image:not([hidden]) { animation: reveal 0.35s ease both; }
+.output-image img {
+    display: block;
+    max-width: 100%;
+    max-height: 70vh;
+    border-radius: 8px;
+}
+
+/* Other ways to share: secondary, below the main link. */
+.alts {
+    margin-top: 16px;
+    padding-top: 14px;
     border-top: 1px solid var(--border);
 }
-details summary {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 44px;
-    color: var(--text-muted);
-    font-size: 0.92rem;
+.alts-title {
+    margin: 0 0 10px;
+    color: var(--text-faint);
+    font-size: 0.76rem;
     font-weight: 600;
-    list-style: none;
-    cursor: pointer;
-    transition: color 0.15s;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
-details summary::-webkit-details-marker { display: none; }
-details summary:hover { color: var(--text); }
-details summary::before {
-    --icon: var(--i-chevron);
-    transition: transform 0.2s;
+.alts-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
-details[open] summary::before { transform: rotate(90deg); }
-details .btn { margin-top: 10px; }
+.alts-row .btn[aria-expanded="true"] {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+.alt-panel { margin-top: 12px; }
+.alt-panel:not([hidden]) { animation: reveal 0.25s ease both; }
+#alt-value {
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+.alt-foot {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+}
+.alt-foot .hint { margin: 6px 0 0; font-size: 0.86rem; }
+.alt-foot .btn { flex: none; }
 
 .status {
     display: flex;
@@ -653,6 +736,112 @@ details .btn { margin-top: 10px; }
     mask: none;
     animation: spin 0.7s linear infinite;
 }
+
+/* ── Viewer: what a share link opens ───── */
+html[data-view] #app-main, html[data-view] .segment, html[data-view] .footer { display: none; }
+html:not([data-view]) #viewer { display: none; }
+html[data-view] .header { grid-template-columns: 1fr auto; }
+.viewer {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    width: min(680px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: clamp(24px, 8vh, 72px) 0 40px;
+}
+.view-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 0;
+    padding: 40px 0;
+    color: var(--text-muted);
+}
+.view-loading::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-strong);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+.view-lock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 18px 4px 8px;
+    text-align: center;
+}
+.view-lock-icon {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
+    color: #fff;
+    box-shadow: 0 14px 30px -14px var(--primary-a), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+.view-lock-icon::before {
+    --icon: var(--i-lock);
+    width: 24px;
+    height: 24px;
+}
+.view-lock h1, .view-fail h1 {
+    margin: 16px 0 0;
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.view-lock .hint { margin: 6px 0 20px; }
+.view-lock .pass-row, .view-lock .btn.primary { width: min(100%, 380px); }
+.view-lock .pass-row input { padding-right: 50px; }
+.view-lock .btn.primary { margin-top: 12px; }
+.view-error {
+    margin: 12px 0 0;
+    color: var(--danger);
+    font-size: 0.92rem;
+}
+.view-text {
+    max-height: 70vh;
+    margin: 0;
+    padding: 14px 16px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--field);
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.view-img {
+    display: block;
+    max-width: 100%;
+    max-height: 75vh;
+    margin: 0 auto;
+    border-radius: 12px;
+}
+#view-content:not([hidden]) { animation: reveal 0.35s ease both; }
+.view-fail {
+    padding: 12px 4px;
+    text-align: center;
+}
+.view-fail h1 { margin-top: 4px; }
+.view-foot {
+    margin: 0;
+    text-align: center;
+    font-size: 0.9rem;
+}
+.view-foot a {
+    color: var(--text-muted);
+    font-weight: 600;
+    text-decoration: none;
+}
+.view-foot a:hover { color: var(--text); }
 
 /* ── Footer ─────────────────────────────── */
 .footer { padding: 20px 0 36px; }
@@ -746,7 +935,7 @@ kbd {
     /* One row always, so the toolbar never jumps while typing:
        the character count gives way before anything wraps. */
     .card-head, .card-actions { flex-wrap: nowrap; }
-    .card-head label, .card-head h2 { flex: none; }
+    .card-head label, .card-head h2, .card-head h1 { flex: none; }
     .card-actions { min-width: 0; }
     .card-actions .btn.sm { padding: 0 8px; }
     .meta {
@@ -758,10 +947,12 @@ kbd {
     }
     .actions { flex-direction: column; }
     .actions .btn { width: 100%; }
+    .alt-foot { flex-direction: column; }
+    .alt-foot .btn { width: 100%; }
     /* 16px keeps iOS from zooming the page when a field is focused. */
     textarea, .pass-row input { font-size: 16px; }
 }
-@media (max-width: 380px) {
+@media (max-width: 440px) {
     .card-actions .btn.ghost::before { display: none; }
 }
 @media (max-width: 350px) {
@@ -771,6 +962,7 @@ kbd {
     .btn.sm { min-height: 40px; }
     .pass-tools .icon-btn { width: 40px; height: 40px; }
     .pass-row input { padding-right: 94px; }
+    .view-lock .pass-row input { padding-right: 54px; }
     .shortcuts { display: none; }
     .btn.primary[data-kbd]::after { display: none; }
     .short-code::after { content: "Tap to copy"; }
